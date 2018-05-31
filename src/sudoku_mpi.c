@@ -66,39 +66,59 @@ static int32_t kMATRIX[SIZE][SIZE] = {
 int32_t main(int32_t argc, char **argv) {
   MPI_Init(&argc, &argv);
 
-  printf("\nProblem:\n");
+  int comm_size;
+  int comm_rank;
+  bool is_master = false;
 
-  SDK_Print(kMATRIX);
+  if (MPI_Comm_rank(MPI_COMM_WORLD, &comm_rank) != MPI_SUCCESS) {
+    fprintf(stderr, "%s\n", "error: cannot get rank");
+  }
 
-  printf("\nConversion:\n");
+  if (MPI_Comm_size(MPI_COMM_WORLD, &comm_size) != MPI_SUCCESS) {
+    fprintf(stderr, "%s\n", "error: cannot get size");
+  }
+
+  if (comm_rank == 0) {
+    is_master = true;
+  }
 
   SDK_Import(kMATRIX);
-  SDK_Print(kMATRIX);
 
-  do {
-    printf("\nVerticals:\n");
-
+retry:
+  if (comm_rank == 0) {
     SDK_Mark_Vertical_Availables(kMATRIX);
-    SDK_Print(kMATRIX);
 
-    printf("\nHorizontals:\n");
+    int32_t tmp[SIZE][SIZE];
 
+    MPI_Recv(tmp, SIZE * SIZE, MPI_INT, 1, 0, MPI_COMM_WORLD, NULL);
+    SDK_Apply(kMATRIX, tmp);
+    MPI_Recv(tmp, SIZE * SIZE, MPI_INT, 2, 0, MPI_COMM_WORLD, NULL);
+    SDK_Apply(kMATRIX, tmp);
+
+  } else if (comm_rank == 1) {
     SDK_Mark_Horizontal_Availables(kMATRIX);
-    SDK_Print(kMATRIX);
 
-    printf("\nSubbox:\n");
-
+    MPI_Send(kMATRIX, SIZE * SIZE, MPI_INT, 0, 0, MPI_COMM_WORLD);
+  } else if (comm_rank == 2) {
     SDK_Mark_Subbox_Availables(kMATRIX);
-    SDK_Print(kMATRIX);
 
-    if (SDK_Check_Breakdown(kMATRIX)) {
-      printf("\nProblem is on breakdown.\n");
-    } else {
-      printf("\nProblem is open.\n");
+    MPI_Send(kMATRIX, SIZE * SIZE, MPI_INT, 0, 0, MPI_COMM_WORLD);
+  } else {
+    goto bailout;
+  }
+
+  MPI_Bcast(kMATRIX, SIZE * SIZE, MPI_INT, 0, MPI_COMM_WORLD);
+
+  if (SDK_Check_Breakdown(kMATRIX)) {
+    if (is_master) {
+      SDK_Pretty_Print(kMATRIX);
     }
-  } while (!SDK_Check_Breakdown(kMATRIX));
+  } else {
+    goto retry;
+  }
 
-  SDK_Pretty_Print(kMATRIX);
+bailout:
+  MPI_Barrier(MPI_COMM_WORLD);
 
   MPI_Finalize();
 }
